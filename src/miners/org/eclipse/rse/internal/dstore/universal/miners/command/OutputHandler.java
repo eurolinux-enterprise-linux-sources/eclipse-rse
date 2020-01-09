@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2009 IBM Corporation and others.
+ * Copyright (c) 2006, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -16,6 +16,12 @@
  * David McKnight   (IBM)        - [243699] [dstore] Loop in OutputHandler
  * David McKnight     (IBM)   [249715] [dstore][shells] Unix shell does not echo command
  * David McKnight   (IBM)        - [282919] [dstore] server shutdown results in exception in shell io reading
+ * David McKnight (IBM) - [286671] Dstore shell service interprets &lt; and &gt; sequences
+ * David McKnight     (IBM)   [287305] [dstore] Need to set proper uid for commands when using SecuredThread and single server for multiple clients[
+ * Peter Wang         (IBM)   [299422] [dstore] OutputHandler.readLines() not compatible with servers that return max 1024bytes available to be read
+ * David McKnight   (IBM)     [302996] [dstore] null checks and performance issue with shell output
+ * David McKnight   (IBM)     [309338] [dstore] z/OS USS - invocation of 'env' shell command returns inconsistently organized output
+ * David McKnight   (IBM)     [312415] [dstore] shell service interprets &lt; and &gt; sequences - handle old client/new server case
  *******************************************************************************/
 
 package org.eclipse.rse.internal.dstore.universal.miners.command;
@@ -91,15 +97,26 @@ public class OutputHandler extends Handler {
 	public void handle() {
 		String[] lines = readLines();
 		if (lines != null) {
-
+						
 			/*
 			 * if (lines.length == 0) { _reader. }
 			 *  // don't do anything unless we require output if (_newCommand &&
 			 * !_isTerminal) { doPrompt(); } } else
 			 */
 			for (int i = 0; i < lines.length; i++) {
-				String line = lines[i];
-				_commandThread.interpretLine(line, _isStdError);
+				// first make sure it's not a multiline line
+				String ln = lines[i];
+				if (ln.indexOf('\n') > 0){
+					String[] lns = ln.split("\n"); //$NON-NLS-1$
+					for (int j = 0; j < lns.length; j++){
+						String line = convertSpecialCharacters(lns[j]);
+						_commandThread.interpretLine(line, _isStdError);
+					}
+				}
+				else {
+					String line = convertSpecialCharacters(ln);
+					_commandThread.interpretLine(line, _isStdError);
+				}
 			}
 
 			if (!_isTerminal){
@@ -109,6 +126,34 @@ public class OutputHandler extends Handler {
 			_commandThread.refreshStatus();
 		} else {
 			finish();
+		}
+	}
+	
+	private String convertSpecialCharacters(String input){
+		if (_commandThread._supportsCharConversion){
+		   // needed to ensure xml characters aren't converted in xml layer			
+			StringBuffer output = new StringBuffer();
+
+			for (int idx = 0; idx < input.length(); idx++)
+			{
+				char currChar = input.charAt(idx);
+				switch (currChar)
+				{
+				case '&' :
+					output.append("&#38;");
+					break;
+				case ';' :
+					output.append("&#59;");
+					break;
+				default :
+					output.append(currChar);
+					break;
+				}
+			}
+			return output.toString();
+		}
+		else {
+			return input;
 		}
 	}
 
@@ -128,19 +173,22 @@ public class OutputHandler extends Handler {
 				}
 			}
 		} catch (IOException e) {
-			e.printStackTrace();
+			_commandThread._dataStore.trace(e);
 		}
 	}
 
-
-	private int checkAvailable() {
+	private int checkAvailable(){
+		return checkAvailable(100);
+	}
+	
+	private int checkAvailable(int time) {
 		try
 		{
 			int available = _reader.available();
 
 			// if there's none, wait a bit and return true to continue
-			if (available <= 0) {
-				sleep(100);
+			if (available <= 0){
+				sleep(time);
 				available = _reader.available();
 			}
 			return available;
@@ -165,7 +213,7 @@ public class OutputHandler extends Handler {
 			int lookahead = 0;
 
 			// re-determine available if none available now
-			if (available == 0) {	
+			if (available == 0) {
 				try {
 					lookahead = _reader.read();
 				}
@@ -173,7 +221,6 @@ public class OutputHandler extends Handler {
 					// pipe closed
 					return null;
 				}
-				
 				if (lookahead == -1) {
 					return null;
 				} else {
@@ -233,25 +280,43 @@ public class OutputHandler extends Handler {
 						int index = 0;
 						while (tokenizer.hasMoreTokens()) {
 							output[index] = tokenizer.nextToken();
+							
+						
 							index++;
 						}
 
 						String lastLine = output[index - 1];
-	
+
+						boolean endLine = fullOutput.endsWith("\n") || fullOutput.endsWith("\r") || fullOutput.endsWith(">");
 						
-						if (!_endOfStream && (!fullOutput.endsWith("\n") && !fullOutput.endsWith("\r"))) //$NON-NLS-1$ //$NON-NLS-2$
+						if (!_endOfStream && !endLine)
 						{
 							// our last line may be cut off		
 							byte[] lastBytes = new byte[MAX_OFFSET];
 							
 							int lastIndex = 0;
-									
-							available = _reader.available();
+							available = checkAvailable();
+					
+							if (available == 0){
+								try {
+									lookahead = _reader.read();
+								}
+								catch  (IOException e){
+									// pipe closed
+									// allow to fall through
+								}
+								if (lookahead == -1) {
+									// allow to fall through
+								} else {
+									available = _reader.available() + 1;
+								}
+							}
+				
 							if (available > 0)
 							{
 								while (!_endOfStream && lastIndex < MAX_OFFSET)
 								{
-									available = _reader.available();
+									
 									if (available == 0)
 									{
 										String suffix = new String(lastBytes, 0, lastIndex, encoding);
@@ -269,38 +334,44 @@ public class OutputHandler extends Handler {
 									else
 									{
 										lastBytes[lastIndex] = (byte)c;
-																	
-										// check for end of line
-										String suffix = new String(lastBytes, 0, lastIndex + 1, encoding);
-										int rBreak = suffix.indexOf("\r"); //$NON-NLS-1$
-										int nBreak = suffix.indexOf("\n"); //$NON-NLS-1$
-										if (nBreak != -1 || rBreak != -1) 
-										{
+										
+										String osname = System.getProperty("os.name").toLowerCase(); //$NON-NLS-1$
+										char lf = '\r';
+										char nl = '\n';
+										
+										// in ebcdic, the following chars are used
+										if (osname.startsWith("z")){ //$NON-NLS-1$
+											lf = '\25';
+											nl = '\15';
+										}
+										
+										if (lastBytes[lastIndex] == lf || lastBytes[lastIndex] == nl){
 											// we've hit the end of line;
+											String suffix = new String(lastBytes, 0, lastIndex + 1, encoding);
 											output[index - 1] = lastLine + suffix.substring(0, suffix.length() - 1);
 											return output;
 										}
 									
 										lastIndex++;
+										available = checkAvailable();
 									}
 								
 								}
 							}
 							
 						}
-						
+
 						return output;
 					}
 				} catch (Exception e) {
-					e.printStackTrace();
+					_commandThread._dataStore.trace(e);
 				}
 			}
 		} catch (Exception e) {
-			e.printStackTrace();
+			_commandThread._dataStore.trace(e);
 		}
 		return output;
 	}
-	
 	public synchronized void waitForInput() {
 		try {
 			Thread.sleep(100);

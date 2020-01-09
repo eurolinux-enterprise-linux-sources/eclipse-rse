@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2007, 2008 Wind River Systems, Inc. and others.
+ * Copyright (c) 2007, 2010 Wind River Systems, Inc. and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -114,7 +114,7 @@ public class SubSystemConfigurationProxyTestCase extends RSECoreTestCase {
 
 				if ("org.eclipse.rse.tests.subsystems.TestSubSystem3".equals(proxy.getId())) { //$NON-NLS-1$
 					assertEquals("Unexpected return value for proxy.getDescription()!", "Test Subsystem 3", proxy.getDescription()); //$NON-NLS-1$ //$NON-NLS-2$
-					assertEquals("Unexpected return value for proxy.getVendor()!", "Eclipse.org", proxy.getVendor()); //$NON-NLS-1$ //$NON-NLS-2$
+					assertEquals("Unexpected return value for proxy.getVendor()!", "Eclipse.org - DSDP", proxy.getVendor()); //$NON-NLS-1$ //$NON-NLS-2$
 					assertEquals("Unexpected return value for proxy.getName()!", "Tests3", proxy.getName()); //$NON-NLS-1$ //$NON-NLS-2$
 					assertEquals("Unexpected return value for proxy.getDeclaredSystemTypeIds()!", "org.eclipse.rse.systemtype.*n?x", proxy.getDeclaredSystemTypeIds()); //$NON-NLS-1$ //$NON-NLS-2$
 					assertFalse("Unexpected return value true for proxy.supportsAllSystemTypes()!", proxy.supportsAllSystemTypes()); //$NON-NLS-1$

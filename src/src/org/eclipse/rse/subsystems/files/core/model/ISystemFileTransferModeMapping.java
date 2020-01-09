@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2002, 2008 IBM Corporation and others.
+ * Copyright (c) 2002, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -13,15 +13,33 @@
  * 
  * Contributors:
  * David McKnight   (IBM)        - [208951] new priority field
+ * David McKnight (IBM)  - [283033] remoteFileTypes extension point should include "xml" type
+ * David McKnight (IBM)  - [304170] [api] ISystemFileTypes and ISystemFileTransferModeMapping should be marked @noimplement
  *******************************************************************************/
 
 package org.eclipse.rse.subsystems.files.core.model;
 
+/**
+ * Interface using for determining the mapping for a particular file type. 
+ *
+ * @noimplement This interface is not intended to be implemented by clients.
+ */
 public interface ISystemFileTransferModeMapping {
 
-
-
 	/**
+	 * @since 3.2
+	 */
+	public static final int FILE_TYPE_BINARY = 0;
+	/**
+	 * @since 3.2
+	 */
+	public static final int FILE_TYPE_TEXT = 1;
+	/**
+	 * @since 3.2
+	 */
+	public static final int FILE_TYPE_XML = 2;
+
+	/** 
 	 * Get the extension
 	 * 
 	 * @return the extension for the mapping
@@ -60,6 +78,13 @@ public interface ISystemFileTransferModeMapping {
 	 */
 	public boolean isText();
 	
+	/**
+	 * Returns if the mapping is XML
+	 * 
+	 * @return true if XML
+	 * @since 3.2
+	 */
+	public boolean isXML();
 	
 	/**
 	 * Gets the priority - the smaller the number, the higher priority

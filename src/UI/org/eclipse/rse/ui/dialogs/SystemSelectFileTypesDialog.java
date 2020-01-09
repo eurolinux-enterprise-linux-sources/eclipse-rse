@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2002, 2008 IBM Corporation and others.
+ * Copyright (c) 2002, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -13,6 +13,7 @@
  * 
  * Contributors:
  * {Name} (company) - description of contribution.
+ * Xuan Chen (IBM) - [312171] TVT36:TCT186: TVT_KOR: Truncation on button 
  *******************************************************************************/
 
 package org.eclipse.rse.ui.dialogs;
@@ -227,6 +228,9 @@ public class SystemSelectFileTypesDialog
 		//Button deselectButton = createButton(buttonComposite, IDialogConstants.DESELECT_ALL_ID, GenericMessages.getString("WizardTransferPage.deselectAll"), false); //$NON-NLS-1$
 		Button deselectButton = createButton(buttonComposite, IDialogConstants.DESELECT_ALL_ID, 
 		                                     SystemResources.RESID_SELECTFILES_DESELECTALL_BUTTON_ROOT_LABEL, false); 
+		
+		GridData buttonData = (GridData)deselectButton.getLayoutData();
+		buttonData.widthHint = buttonData.widthHint * 130 / 100;
 		
 		listener = new SelectionAdapter() {
 			public void widgetSelected(SelectionEvent e) {

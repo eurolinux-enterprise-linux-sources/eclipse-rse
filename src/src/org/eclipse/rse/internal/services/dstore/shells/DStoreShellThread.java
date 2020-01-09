@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2007 IBM Corporation and others.
+ * Copyright (c) 2006, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,6 +14,8 @@
  * Contributors:
  * {Name} (company) - description of contribution.
  * David McKnight   (IBM)        - [196624] dstore miner IDs should be String constants rather than dynamic lookup
+ * David McKnight (IBM) - [286671] Dstore shell service interprets &lt; and &gt; sequences
+ * David McKnight   (IBM)     [312415] [dstore] shell service interprets &lt; and &gt; sequences - handle old client/new server case
  *******************************************************************************/
 
 package org.eclipse.rse.internal.services.dstore.shells;
@@ -23,6 +25,7 @@ import java.io.File;
 import org.eclipse.dstore.core.model.DE;
 import org.eclipse.dstore.core.model.DataElement;
 import org.eclipse.dstore.core.model.DataStore;
+import org.eclipse.dstore.core.model.DataStoreResources;
 import org.eclipse.dstore.core.model.DataStoreSchema;
 import org.eclipse.rse.dstore.universal.miners.IUniversalDataStoreConstants;
 
@@ -43,6 +46,8 @@ public class DStoreShellThread
 	private DataStore _dataStore;
 	private DataElement _status;
 	private String _invocation;
+	
+	private boolean _sentCharConversionCommand = false;
 	
 	/**
 	 * @param cwd initial working directory
@@ -262,6 +267,18 @@ public class DStoreShellThread
 
 				if (cmd != null)
 				{	
+					// first, find out if the server support conversion
+					DataElement fsD= dataStore.findObjectDescriptor(DataStoreResources.model_directory);
+					DataElement convDes = dataStore.localDescriptorQuery(fsD, "C_CHAR_CONVERSION", 1); //$NON-NLS-1$
+					if (convDes != null){						
+						if (!_sentCharConversionCommand){
+							dataStore.command(convDes, _status);
+							_sentCharConversionCommand = true;
+						}
+						
+						cmd = convertSpecialCharacters(cmd);
+					}
+					
 				    DataElement commandDescriptor = getSendInputDescriptor(commandElement);
 					if (commandDescriptor != null)
 					{
@@ -271,5 +288,29 @@ public class DStoreShellThread
 				}
 			}
 		}
+	}
+	
+	private String convertSpecialCharacters(String input){
+	   // needed to ensure xml characters aren't converted in xml layer	
+	
+		StringBuffer output = new StringBuffer();
+
+		for (int idx = 0; idx < input.length(); idx++)
+		{
+			char currChar = input.charAt(idx);
+			switch (currChar)
+			{
+			case '&' :
+				output.append("&#38;");
+				break;
+			case ';' :
+				output.append("&#59;");
+				break;
+			default :
+				output.append(currChar);
+				break;
+			}
+		}
+		return output.toString();
 	}
 }

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2002, 2009 IBM Corporation and others.
+ * Copyright (c) 2002, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -38,6 +38,8 @@
  * David McKnight   (IBM)        - [267236] [dstore] Can't connect after a wrong password
  * David McKnight   (IBM)        - [274688] [api][dstore] DStoreConnectorService.internalConnect() needs to be cleaned up
  * David McKnight   (IBM)        - [258529] Unable to display connection failure error message
+ * David McKnight   (IBM)        - [306989] [dstore] workspace in strange condition if expanding projects during  logon
+ * David McKnight   (IBM)        - [313653] [dstore] Not Secured using SSL message appears twice per connect
  *******************************************************************************/
 
 package org.eclipse.rse.connectorservice.dstore;
@@ -119,9 +121,12 @@ public class DStoreConnectorService extends StandardConnectorService implements 
 	private class ConnectionStatusPair {
 		private ConnectionStatus _connectStatus;
 		private ConnectionStatus _launchStatus;
-		public ConnectionStatusPair(ConnectionStatus connectStatus, ConnectionStatus launchStatus){
+		private Boolean _alertedNonSSL;
+		
+		public ConnectionStatusPair(ConnectionStatus connectStatus, ConnectionStatus launchStatus, Boolean alertedNonSSL){
 			_connectStatus = connectStatus;
 			_launchStatus = launchStatus;
+			_alertedNonSSL = alertedNonSSL;
 		}
 		
 		public ConnectionStatus getConnectStatus(){
@@ -130,6 +135,10 @@ public class DStoreConnectorService extends StandardConnectorService implements 
 		
 		public ConnectionStatus getLaunchStatus(){
 			return _launchStatus;
+		}
+		
+		public Boolean getAlertedNonSSL(){
+			return _alertedNonSSL;
 		}
 	}
 	
@@ -791,7 +800,7 @@ public class DStoreConnectorService extends StandardConnectorService implements 
 			}
 		} 
 
-		return new ConnectionStatusPair(connectStatus, launchStatus);
+		return new ConnectionStatusPair(connectStatus, launchStatus, alertedNONSSL);
 	}
 	
 	/**
@@ -1300,54 +1309,59 @@ public class DStoreConnectorService extends StandardConnectorService implements 
 	    }
 	    
 	    _isConnecting = true;
-	    Boolean alertedNONSSL = new Boolean(false);
-
-		// set A_PLUGIN_PATH so that dstore picks up the property
-		setPluginPathProperty();
-
-		// Fire comm event to signal state about to change
-		fireCommunicationsEvent(CommunicationsEvent.BEFORE_CONNECT);
-
-		ConnectionStatus connectStatus = null;
-		ConnectionStatus launchStatus = null;
-
-		clientConnection = new ClientConnection(getPrimarySubSystem().getHost().getAliasName());
-
-		clientConnection.setHost(getHostName());
-		clientConnection.setPort(Integer.toString(getPort()));
-
-		getPrimarySubSystem();
-		IRemoteServerLauncher serverLauncher = getDStoreServerLauncher();
-
-		ServerLaunchType serverLauncherType = null;
-		if (serverLauncher != null){
-		    serverLauncherType = serverLauncher.getServerLaunchType();
-		}
-
-		SystemSignonInformation info = getSignonInformation();
-		if (serverLauncherType == ServerLaunchType.REXEC_LITERAL){	// start the server via REXEC			
-			connectStatus = connectWithREXEC(info, serverLauncher, monitor);
-		}
-		else if (serverLauncherType == ServerLaunchType.DAEMON_LITERAL) { // start the server via the daemon
-		
-			ConnectionStatusPair connectStatusPair = connectWithDaemon(info, serverLauncher, alertedNONSSL, monitor);
-			connectStatus = connectStatusPair.getConnectStatus();
-			launchStatus = connectStatusPair.getLaunchStatus();
-		}
-		else if (serverLauncherType == ServerLaunchType.RUNNING_LITERAL){ // connect to running server
-			connectStatus = connectWithRunning(monitor);
-		}		
-		else { // server launcher type is unknown
-			connectStatus = connectWithOther(clientConnection, info, serverLauncher, monitor);		
-		}
-
-		if (connectStatus != null && connectStatus.isConnected()){  // connected 
-			initializeConnection(launchStatus, connectStatus, alertedNONSSL, monitor);
-		}
-		else  {	// diagnosis, reconnection and other connection failure handling
-			handleConnectionFailure(launchStatus, connectStatus, serverLauncher, serverLauncherType, monitor);
-		}
+	    try{
+		    Boolean alertedNONSSL = new Boolean(false);
+	
+			// set A_PLUGIN_PATH so that dstore picks up the property
+			setPluginPathProperty();
+	
+			// Fire comm event to signal state about to change
+			fireCommunicationsEvent(CommunicationsEvent.BEFORE_CONNECT);
+	
+			ConnectionStatus connectStatus = null;
+			ConnectionStatus launchStatus = null;
+	
+			clientConnection = new ClientConnection(getPrimarySubSystem().getHost().getAliasName());
+	
+			clientConnection.setHost(getHostName());
+			clientConnection.setPort(Integer.toString(getPort()));
+	
+			getPrimarySubSystem();
+			IRemoteServerLauncher serverLauncher = getDStoreServerLauncher();
+	
+			ServerLaunchType serverLauncherType = null;
+			if (serverLauncher != null){
+			    serverLauncherType = serverLauncher.getServerLaunchType();
+			}
+	
+			SystemSignonInformation info = getSignonInformation();
+			if (serverLauncherType == ServerLaunchType.REXEC_LITERAL){	// start the server via REXEC			
+				connectStatus = connectWithREXEC(info, serverLauncher, monitor);
+			}
+			else if (serverLauncherType == ServerLaunchType.DAEMON_LITERAL) { // start the server via the daemon
+			
+				ConnectionStatusPair connectStatusPair = connectWithDaemon(info, serverLauncher, alertedNONSSL, monitor);
+				connectStatus = connectStatusPair.getConnectStatus();
+				launchStatus = connectStatusPair.getLaunchStatus();
+				alertedNONSSL = connectStatusPair.getAlertedNonSSL();
+			}
+			else if (serverLauncherType == ServerLaunchType.RUNNING_LITERAL){ // connect to running server
+				connectStatus = connectWithRunning(monitor);
+			}		
+			else { // server launcher type is unknown
+				connectStatus = connectWithOther(clientConnection, info, serverLauncher, monitor);		
+			}
+	
+			if (connectStatus != null && connectStatus.isConnected()){  // connected 
+				initializeConnection(launchStatus, connectStatus, alertedNONSSL, monitor);
+			}
+			else  {	// diagnosis, reconnection and other connection failure handling
+				handleConnectionFailure(launchStatus, connectStatus, serverLauncher, serverLauncherType, monitor);
+			}
+	    }
+	    finally {
 		_isConnecting = false;
+	    }
 	}
 
 	protected boolean isPortOutOfRange(String message)

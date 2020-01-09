@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2002, 2009 IBM Corporation and others.
+ * Copyright (c) 2002, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -17,6 +17,8 @@
  * David McKnight   (IBM)        - [189873] DownloadJob changed to DownloadAndOpenJob
  * David McKnight   (IBM)        - [224377] "open with" menu does not have "other" option
  * David McKnight   (IBM)        - [276103] Files with names in different cases are not handled properly
+ * David McKnight   (IBM)        - [309813] RSE permits opening of file after access removed
+ * David McKnight   (IBM)        - [312362] Editing Unix file after it changes on host edits old data
  *******************************************************************************/
 
 package org.eclipse.rse.internal.files.ui.actions;
@@ -102,7 +104,8 @@ public class SystemEditFilesAction extends SystemBaseAction {
 		    Object obj = iterator.next();
 		    if (obj instanceof IRemoteFile)
 		    {
-		        process((IRemoteFile)obj);
+		    	IRemoteFile remoteFile = (IRemoteFile)obj;
+		        process(remoteFile);
 		    }
 		}
 	}
@@ -124,7 +127,7 @@ public class SystemEditFilesAction extends SystemBaseAction {
 			long storedModifiedStamp = properties.getRemoteFileTimeStamp();
 	
 			// get updated remoteFile so we get the current remote timestamp
-			//remoteFile.markStale(true);
+			remoteFile.markStale(true);
 			IRemoteFileSubSystem subsystem = remoteFile.getParentRemoteFileSubSystem();
 			try
 			{
@@ -151,11 +154,14 @@ public class SystemEditFilesAction extends SystemBaseAction {
 			boolean usedBinary = properties.getUsedBinaryTransfer();
 			boolean isBinary = remoteFile.isBinary();
 			
+			boolean usedReadOnly = properties.getReadOnly();
+			boolean isReadOnly = !remoteFile.canWrite();
+			
 			return (!dirty && 
 					!remoteNewer && 
 					usedBinary == isBinary &&
+					usedReadOnly == isReadOnly && 
 					!encodingChanged);
-
 		}
 		return false;
 	}
@@ -165,6 +171,12 @@ public class SystemEditFilesAction extends SystemBaseAction {
 	 */
 	protected void process(IRemoteFile remoteFile) {
 
+		// make sure we're using the latest version of remoteFile
+		try {
+			remoteFile = remoteFile.getParentRemoteFileSubSystem().getRemoteFileObject(remoteFile.getAbsolutePath(), new NullProgressMonitor());
+		}
+		catch (Exception e){				
+		}
 		String editorId = null;
 		IEditorDescriptor des = getDefaultEditor(remoteFile);
 		if (des != null)
@@ -185,9 +197,10 @@ public class SystemEditFilesAction extends SystemBaseAction {
 		{
 			try
 			{
+				boolean isCached = isFileCached(editable, remoteFile);
 				if (editable.checkOpenInEditor() != ISystemEditableRemoteObject.OPEN_IN_SAME_PERSPECTIVE)
 				{						
-					if (isFileCached(editable, remoteFile))
+					if (isCached)
 					{
 						editable.openEditor();
 					}
@@ -199,8 +212,16 @@ public class SystemEditFilesAction extends SystemBaseAction {
 				}
 				else
 				{
-					editable.setLocalResourceProperties();
-					editable.openEditor();
+					if (isCached)
+					{
+						editable.setLocalResourceProperties();
+						editable.openEditor();
+					}
+					else
+					{
+						DownloadAndOpenJob oJob = new DownloadAndOpenJob(editable, false);
+						oJob.schedule();
+					}
 				}
 			}
 			catch (Exception e)

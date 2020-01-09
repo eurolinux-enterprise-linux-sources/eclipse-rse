@@ -1,5 +1,5 @@
 /********************************************************************************
- * Copyright (c) 2006, 2008 IBM Corporation and others. All rights reserved.
+ * Copyright (c) 2006, 2010 IBM Corporation and others. All rights reserved.
  * This program and the accompanying materials are made available under the terms
  * of the Eclipse Public License v1.0 which accompanies this distribution, and is
  * available at http://www.eclipse.org/legal/epl-v10.html
@@ -31,6 +31,11 @@
  * Martin Oberhuber (Wind River) - [233993] Improve EFS error reporting
  * Martin Oberhuber (Wind River) - [220300] EFS Size Property not properly updated after saving
  * Martin Oberhuber (Wind River) - [234026] Clarify IFileService#createFolder() Javadocs
+ * David McKnight  (IBM)         - [287185] EFS provider should interpret the URL host component as RSE connection name rather than a hostname
+ * David McKnight  (IBM)         - [291738] [efs] repeated queries to RSEFileStoreImpl.fetchInfo() in short time-span should be reduced
+ * Szymon Brandys  (IBM)         - [303092] [efs] RSE portion to deal with FileSystemResourceManager makes second call to efs provider on exception due to cancel
+ * Martin Oberhuber (Wind River) - [314496] [efs] Symlink target not reported
+ * Martin Oberhuber (Wind River) - [314433] [efs] NPE on openOutputStream to broken symlink
  ********************************************************************************/
 
 package org.eclipse.rse.internal.efs;
@@ -48,6 +53,7 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.osgi.util.NLS;
@@ -79,6 +85,10 @@ public class RSEFileStoreImpl extends FileStore
 {
 	private RSEFileStore _store;
 
+	// to help with with performance issues when eclipse makes excessing fetchInfo calls
+	private long _lastFetch = 0;
+	private int _fetchWaitThreshold = 1000;
+	
 	//cached IRemoteFile object: an Object to avoid early class loading
 	private transient volatile IRemoteFile _remoteFile;
 
@@ -91,6 +101,16 @@ public class RSEFileStoreImpl extends FileStore
 	 */
 	public RSEFileStoreImpl(RSEFileStore store) {
 		_store = store;
+		
+		String waitStr = System.getProperty("rse_efs_fetch_wait_threshold"); //$NON-NLS-1$
+		if (waitStr != null && waitStr.length() > 0){
+			try {
+				_fetchWaitThreshold = Integer.parseInt(waitStr);
+			}
+			catch (Exception e){
+				_fetchWaitThreshold = 1000;
+			}
+		}
 	}
 
 	/*
@@ -147,13 +167,14 @@ public class RSEFileStoreImpl extends FileStore
 	}
 
 	/**
-	 * Return the best RSE connection object matching the given host name.
+	 * Return the best RSE connection object matching the given host name and/or connection alias.
 	 *
-	 * @param hostNameOrAddr IP address of requested host.
-	 * @return RSE connection object matching the given host name, or
+	 * @param hostNameOrAddr the host name IP address of requested host.
+	 * @param aliasName the connection alias of the requested host
+	 * @return RSE connection object matching the given connection alias, host name, or
 	 *     <code>null</code> if no matching connection object was found.
 	 */
-	public static IHost getConnectionFor(String hostNameOrAddr, IProgressMonitor monitor) {
+	public static IHost getConnectionFor(String hostNameOrAddr, String aliasName, IProgressMonitor monitor) {
 		if (hostNameOrAddr==null) {
 			return null;
 		}
@@ -164,18 +185,36 @@ public class RSEFileStoreImpl extends FileStore
 		IHost[] connections = sr.getHosts();
 
 		IHost unconnected = null;
-		for (int i = 0; i < connections.length; i++) {
-
-			IHost con = connections[i];
-
-			//TODO use more elaborate methods of checking whether two
-			//host names/IP addresses are the same; or, use the host alias
-			if (hostNameOrAddr.equalsIgnoreCase(con.getHostName())) {
-				IRemoteFileSubSystem fss = getRemoteFileSubSystem(con);
-				if (fss!=null && fss.isConnected()) {
-					return con;
-				} else {
-					unconnected = con;
+		
+		// first look for connection alias
+		if (aliasName != null){
+			for (int i = 0; i < connections.length; i++) {
+				IHost con = connections[i];
+	
+				if (aliasName.equalsIgnoreCase(con.getAliasName())){
+					IRemoteFileSubSystem fss = getRemoteFileSubSystem(con);
+					if (fss!=null && fss.isConnected()) {
+						return con;
+					} else {
+						unconnected = con;
+					}
+				}
+			}
+		}
+		
+		if (unconnected == null){
+			// if nothing matches the connection alias, fall back to hostname
+			for (int i = 0; i < connections.length; i++) {
+				IHost con = connections[i];	
+				//TODO use more elaborate methods of checking whether two
+				//host names/IP addresses are the same; or, use the host alias
+				if (hostNameOrAddr.equalsIgnoreCase(con.getHostName())) {
+					IRemoteFileSubSystem fss = getRemoteFileSubSystem(con);
+					if (fss!=null && fss.isConnected()) {
+						return con;
+					} else {
+						unconnected = con;
+					}
 				}
 			}
 		}
@@ -229,13 +268,14 @@ public class RSEFileStoreImpl extends FileStore
 	 * Returns the best connected file subsystem for this file store.
 	 * Never returns <code>null</code>.
 	 * @param hostNameOrAddr host name or IP address
+	 * @param aliasName the connection alias
 	 * @param monitor progress monitor
 	 * @return The best connected file subsystem for this file store.
 	 * @throws CoreException if no file subsystem could be found or connected.
 	 */
-	public static IRemoteFileSubSystem getConnectedFileSubSystem(String hostNameOrAddr, IProgressMonitor monitor) throws CoreException
+	public static IRemoteFileSubSystem getConnectedFileSubSystem(String hostNameOrAddr, String aliasName, IProgressMonitor monitor) throws CoreException
 	{
-		IHost con = RSEFileStoreImpl.getConnectionFor(hostNameOrAddr, monitor);
+		IHost con = RSEFileStoreImpl.getConnectionFor(hostNameOrAddr, aliasName, monitor);
 		if (con == null) {
 			throw new CoreException(new Status(IStatus.ERROR,
 					Activator.getDefault().getBundle().getSymbolicName(),
@@ -251,6 +291,9 @@ public class RSEFileStoreImpl extends FileStore
 			try {
 				if (monitor==null) monitor=new NullProgressMonitor();
 				subSys.connect(monitor, false);
+			}
+			catch (OperationCanceledException e) {
+				throw e;
 			}
 			catch (Exception e) {
 				throw new CoreException(new Status(IStatus.ERROR,
@@ -315,7 +358,10 @@ public class RSEFileStoreImpl extends FileStore
 			}
 		} else {
 			//Handle was created with an absolute name
-			IRemoteFileSubSystem subSys = RSEFileStoreImpl.getConnectedFileSubSystem(_store.getHost(), monitor);
+			String aliasName = _store.getAlias();
+			String hostName = _store.getHost();
+			IRemoteFileSubSystem subSys = RSEFileStoreImpl.getConnectedFileSubSystem(hostName, aliasName, monitor);
+			
 			try {
 				remoteFile = subSys.getRemoteFileObject(_store.getAbsolutePath(), monitor);
 			}
@@ -490,26 +536,40 @@ public class RSEFileStoreImpl extends FileStore
 	 * @see org.eclipse.core.filesystem.IFileStore#fetchInfo(int, org.eclipse.core.runtime.IProgressMonitor)
 	 */
 	public IFileInfo fetchInfo(int options, IProgressMonitor monitor) throws CoreException {
-		// clear cache in order to query latest info
-		cacheRemoteFile(null);
+		long curTime = System.currentTimeMillis();
+
+		
+		// don't clear cache when there are several successive queries in a short time-span
+		if (_lastFetch == 0 || ((curTime - _lastFetch) > _fetchWaitThreshold)){	
+			// clear cache in order to query latest info
+			cacheRemoteFile(null);
+			_lastFetch = curTime;
+		}
+
 		// connect if needed. Will throw exception if not successful.
 		IRemoteFile remoteFile = getRemoteFileObject(monitor, false);
 		String classification = (remoteFile==null) ? null : remoteFile.getClassification();
 
 		FileInfo info = new FileInfo(_store.getName());
-		if (remoteFile == null || !remoteFile.exists()) {
+		if (remoteFile == null) {
 			info.setExists(false);
+			return info;
+		}
+		if (classification!=null && classification.startsWith("broken symbolic link")) { //$NON-NLS-1$
 			//broken symbolic link handling
-			if (classification!=null && classification.startsWith("broken symbolic link")) { //$NON-NLS-1$
-				info.setAttribute(EFS.ATTRIBUTE_SYMLINK, true);
-				int i1 = classification.indexOf('\'');
-				if (i1>0) {
-					int i2 = classification.indexOf('´');
-					if (i2>i1) {
-						info.setStringAttribute(EFS.ATTRIBUTE_LINK_TARGET, classification.substring(i1+1,i2));
-					}
+			info.setExists(false);
+			info.setLastModified(remoteFile.getLastModified());
+			info.setAttribute(EFS.ATTRIBUTE_SYMLINK, true);
+			int i1 = classification.indexOf('`');
+			if (i1>0) {
+				int i2 = classification.indexOf('\'');
+				if (i2>i1) {
+					info.setStringAttribute(EFS.ATTRIBUTE_LINK_TARGET, classification.substring(i1+1,i2));
 				}
 			}
+			return info;
+		} else if (!remoteFile.exists()) {
+			info.setExists(false);
 			return info;
 		}
 
@@ -616,6 +676,7 @@ public class RSEFileStoreImpl extends FileStore
 
 		if (remoteFile.isFile()) {
 			try {
+				cacheRemoteFile(null);
 				return subSys.getInputStream(remoteFile.getParentPath(), remoteFile.getName(), true, monitor);
 			}
 			catch (SystemMessageException e) {
@@ -702,7 +763,14 @@ public class RSEFileStoreImpl extends FileStore
 			}
 		}
 
-		if (remoteFile.isFile()) {
+		if (remoteFile.isDirectory()) {
+			throw new CoreException(new Status(IStatus.ERROR,
+					Activator.getDefault().getBundle().getSymbolicName(),
+					EFS.ERROR_WRONG_TYPE,
+					Messages.CANNOT_OPEN_STREAM_ON_FOLDER, null));
+		} else {
+			//bug 314433: try opening the Stream even for non-existing items or symlinks
+			//since returning null violates the API contract - better throw an Exception.
 			try {
 				// Convert from EFS option constants to IFileService option constants
 				if ((options & EFS.APPEND) != 0) {
@@ -710,21 +778,18 @@ public class RSEFileStoreImpl extends FileStore
 				} else {
 					options = IFileService.NONE;
 				}
+				cacheRemoteFile(null);
 				return subSys.getOutputStream(remoteFile.getParentPath(), remoteFile.getName(), options, monitor);
 			}
 			catch (SystemMessageException e) {
 				rethrowCoreException(e, EFS.ERROR_WRITE);
 			}
 		}
-		else if (remoteFile.isDirectory()) {
-			throw new CoreException(new Status(IStatus.ERROR,
-					Activator.getDefault().getBundle().getSymbolicName(),
-					EFS.ERROR_WRONG_TYPE,
-					Messages.CANNOT_OPEN_STREAM_ON_FOLDER, null));
-		}
-		//Fallback: No file, no folder?
-		//TODO check what to do for symbolic links and other strange stuff
-		return null;
+		//file does not exist, apparently
+		//TODO use Java MessageFormat for embedding filename in message
+		throw new CoreException(new Status(IStatus.ERROR, Activator.getDefault().getBundle().getSymbolicName(),
+		    // EFS.ERROR_NOT_EXISTS,
+			EFS.ERROR_WRITE, Messages.FILE_STORE_DOES_NOT_EXIST + ": " + toString(), null)); //$NON-NLS-1$
 	}
 
 	/*

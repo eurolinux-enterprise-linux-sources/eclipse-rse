@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2008 IBM Corporation and others.
+ * Copyright (c) 2006, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -18,6 +18,8 @@
  * Noriaki Takatsu (IBM)  - [220126] [dstore][api][breaking] Single process server for multiple clients
  * Noriaki Takatsu (IBM)  - [230399] [multithread] changes to stop CommandMiner threads when clients disconnect
  * David McKnight  (IBM)  - [226561] [apidoc] Add API markup to RSE Javadocs where extend / implement is allowed
+ * David McKnight (IBM) - [286671] Dstore shell service interprets &lt; and &gt; sequences - cmd descriptor to identify ability
+ * David McKnight   (IBM)     [312415] [dstore] shell service interprets &lt; and &gt; sequences - handle old client/new server case
  *******************************************************************************/
 
 package org.eclipse.rse.dstore.universal.miners;
@@ -143,6 +145,10 @@ public class CommandMiner extends Miner
 
 		DataElement shellD = createCommandDescriptor(fsD, "Shell", "C_SHELL", false); //$NON-NLS-1$ //$NON-NLS-2$
 		_dataStore.createReference(cancellable, shellD, "abstracts", "abstracted by"); //$NON-NLS-1$ //$NON-NLS-2$
+		
+		// indicates support for char conversion in version 3.2
+		createCommandDescriptor(fsD, "CharConversion", "C_CHAR_CONVERSION", false); //$NON-NLS-1$ //$NON-NLS-2$
+		
 
 //		DataElement inputD = _dataStore.createObject(cmdD, "input", "Enter command");
 		_dataStore.createObject(cmdD, "input", "Enter command"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -225,7 +231,16 @@ public class CommandMiner extends Miner
 			getPossibleCommands(status);
 			return status;
 		}
-
+		else if (name.equals("C_CHAR_CONVERSION")) //$NON-NLS-1$
+		{
+			DataElement cmdStatus = getCommandStatus(subject);
+			CommandMinerThread theThread = (CommandMinerThread) _threads.get(cmdStatus.getAttribute(DE.A_ID));
+			if (theThread != null)
+			{	
+				theThread._supportsCharConversion = true;
+			}
+		}
+		
 		return status;
 	}
 	

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2002, 2008 IBM Corporation and others.
+ * Copyright (c) 2002, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -13,6 +13,8 @@
  * 
  * Contributors:
  * David McKnight  (IBM)   [222168][dstore] Buffer in DataElement is not sent
+ * David McKnight  (IBM)   [305218][dstore] problem reading double-byte characters through data socket layer
+ * David McKnight  (IBM)   [307541][dstore] fix for Bug 305218 breaks RDz connections
  *******************************************************************************/
 
 package org.eclipse.dstore.internal.core.util;
@@ -69,7 +71,19 @@ public class Sender implements ISender
 		try
 		{
 			_outFile = new PrintStream(_socket.getOutputStream());
-			_outData = new BufferedWriter(new OutputStreamWriter(_socket.getOutputStream(), DE.ENCODING_UTF_8));
+			
+			String encoding = DE.ENCODING_UTF_8;
+			if (!_dataStore.isVirtual()){
+				encoding = System.getProperty("file.encoding"); //$NON-NLS-1$
+				String theOS = System.getProperty("os.name"); //$NON-NLS-1$
+				if (theOS.startsWith("z")){ //$NON-NLS-1$
+					encoding = DE.ENCODING_UTF_8;
+				}
+			}
+			
+			
+			OutputStreamWriter writer = new OutputStreamWriter(_socket.getOutputStream(), encoding);
+			_outData = new BufferedWriter(writer);
 
 			_xmlGenerator.setFileWriter(_outFile);
 			_xmlGenerator.setDataWriter(_outData);

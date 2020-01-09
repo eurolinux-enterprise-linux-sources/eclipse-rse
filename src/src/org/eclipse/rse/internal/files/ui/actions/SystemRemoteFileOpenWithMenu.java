@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2005, 2009 IBM Corporation and others.
+ * Copyright (c) 2005, 2010 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -18,8 +18,9 @@
  * David McKnight   (IBM)        - [224377] "open with" menu does not have "other" option
  * David McKnight   (IBM)        - [277141] System Editor Passed Incorrect Cache Information in Presence of Case-Differentiated-Only filenames
  * David McKnight   (IBM)        - [284596] [regression] Open with-> problem when descriptor doesn't match previous
+ * David McKnight   (IBM)        - [309755] SystemRemoteFileOpenWithMenu.getPreferredEditor(), the listed default editor is not always correct
+ * David McKnight   (IBM)        - [312362] Editing Unix file after it changes on host edits old data
  *******************************************************************************/
-
 package org.eclipse.rse.internal.files.ui.actions;
 import java.text.Collator;
 import java.util.ArrayList;
@@ -231,6 +232,13 @@ private void createOtherMenuItem(final Menu menu, final IRemoteFile remoteFile) 
 
 protected void openEditor(IRemoteFile remoteFile, IEditorDescriptor descriptor) {
 	
+	// make sure we're using the latest version of remoteFile
+	try {
+		remoteFile = remoteFile.getParentRemoteFileSubSystem().getRemoteFileObject(remoteFile.getAbsolutePath(), new NullProgressMonitor());
+	}
+	catch (Exception e){				
+	}
+	
 	SystemEditableRemoteFile editable = SystemRemoteEditManager.getEditableRemoteObject(remoteFile, descriptor);
 	if (editable == null){
 		// case for cancelled operation when user was prompted to save file of different case
@@ -319,7 +327,7 @@ private void hackOpenEditor(SystemEditableRemoteFile editable, IEditorDescriptor
 	editable.setEditor(editor);
 	
 	SystemIFileProperties properties = new SystemIFileProperties(file);
-	properties.setRemoteFileObject(this);
+	properties.setRemoteFileObject(editable);
 }
 
 private boolean isFileCached(ISystemEditableRemoteObject editable, IRemoteFile remoteFile)
@@ -339,7 +347,7 @@ private boolean isFileCached(ISystemEditableRemoteObject editable, IRemoteFile r
 		long storedModifiedStamp = properties.getRemoteFileTimeStamp();
 
 		// get updated remoteFile so we get the current remote timestamp
-		//remoteFile.markStale(true);
+		remoteFile.markStale(true);
 		IRemoteFileSubSystem subsystem = remoteFile.getParentRemoteFileSubSystem();
 		try
 		{
@@ -366,9 +374,13 @@ private boolean isFileCached(ISystemEditableRemoteObject editable, IRemoteFile r
 		boolean usedBinary = properties.getUsedBinaryTransfer();
 		boolean isBinary = remoteFile.isBinary();
 		
+		boolean usedReadOnly = properties.getReadOnly();
+		boolean isReadOnly = !remoteFile.canWrite();
+		
 		return (!dirty && 
 				!remoteNewer && 
 				usedBinary == isBinary &&
+				usedReadOnly == isReadOnly && 
 				!encodingChanged);
 	}
 	return false;
@@ -395,7 +407,7 @@ protected IEditorDescriptor getPreferredEditor(IRemoteFile remoteFile) {
 
 	IFile localFile = getLocalResource(remoteFile);
 	
-	if (localFile == null) {
+	if (localFile == null || !localFile.exists()){
 		return registry.getDefaultEditor(remoteFile.getName());
 	}
 	else {

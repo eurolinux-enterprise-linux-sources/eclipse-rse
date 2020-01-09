@@ -1,8 +1,8 @@
 #!/bin/sh
 
 NAME=rse
-TM_TAG=R3_1_2
-RSE_TAG=R3_1_2
+TM_TAG=R3_2
+RSE_TAG=R3_2
 
 rm -rf temp
 mkdir temp
@@ -11,8 +11,8 @@ flat=rse-${RSE_TAG}
 mkdir ${flat}
 
 
-VERSION="3.1.2"
-TAG="201002152323"
+VERSION="3.2"
+TAG="201006071030"
 
 echo "Exporting from CVS..."
 
